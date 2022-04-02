@@ -87,3 +87,76 @@ log_reg.fit(x_train_tf, y_train)
 log_reg_predicted_train = log_reg.predict(x_train_tf)
 log_reg_predicted_test = log_reg.predict(x_test_tf)
 ```
+
+# Project 2 - Sale Prediction
+
+### Objective - Develop a predictive model to help forecast product sales
+Data Description:
+- BrandDetails.csv: details of which products are sold in each brand
+- BrandTotalSales.csv: total monthly revenue of brands
+- BrandTotalUnits.csv: total monthly units of products sold
+- BrandAverageRetailPrice.csv: average retail price of brands
+- Top50ProductsbyTotalSales-Timeseries.csv: list of top 50 products
+
+### 2.1 Data Engineering
+Since the rows of data are not independent (impact of previous month to current month), we need to condense the time series data into new features. Here, we added columns for previous month's sales, previous month's units, rolling averages of sales and units. 
+
+Given the complexity of multiple brands with overlapping time intervals, the data is split by brands and then reassembled.
+
+```Python
+dataunits = pd.read_csv('data/BrandTotalUnits.csv')
+#...#
+brands = dataunits["Brands"].unique()
+for brand in brands:
+    if (i%100 == 0):
+        print('{}th Brand Processing'.format(i))
+    units = dataunits[dataunits.Brands == brand]
+
+    units = units.assign(Previous_month_unit=units.loc[:,'Total Units'].shift(1))
+    units = units.assign(Previous_Month2=units.loc[:,'Total Units'].shift(2))
+    units = units.assign(Previous_Month3=units.loc[:,'Total Units'].shift(3))
+    units = units.fillna(0)
+    units = units.assign(Rolling_avg_unit=(units.Previous_month_unit+units.Previous_Month2+units.Previous_Month3)/3)
+    units = units.drop(columns=['Previous_Month2','Previous_Month3'])
+    #...#
+```
+Hot-encoding the brands (categorical variable) will create 1640 additional columns. Instead, the brands are ranked by their average market share. Rank has ordinal property (has natural ordering) so it can be directly used to training the linear regression model.
+
+```Python
+market_share_avg_set = [0 if math.isnan(x) else x for x in market_share_avg_set]
+rank_list = rankdata(market_share_avg_set,method = 'min')
+j = 0
+for brand in brands:
+    if(j%200==0):
+        print('{}th Brand Processing'.format(j))
+    final_data.loc[final_data['Brands']==brand,'Rank'] = rank_list[j]
+    j=j+1
+print('Ranking Completed')
+```
+
+### 2.2 Train & Test Data Split by Brands
+To test the performance of the predictive model, train and test data are separated by brands so that the training data does not contain the same brands that are in the test data. This will show how well the model predicts the sales with the data that it has never seen before
+
+```Python
+def train_test_split_by_brands(xi,yi,brands_list,train_i,test_i):
+    
+    x_train = xi.loc[xi['Brands'].isin(brands_list[train_i])]
+    x_test = xi.loc[xi['Brands'].isin(brands_list[test_i])]
+    y_train_pd = yi.loc[yi['Brands'].isin(brands_list[train_i])]
+    y_test_pd = yi.loc[yi['Brands'].isin(brands_list[test_i])]
+
+    x_train = x_train.drop(columns='Brands')
+    x_test = x_test.drop(columns='Brands')
+    return x_train, x_test, y_train_pd['Total Sales ($)'].tolist(),y_test_pd['Total Sales ($)'].tolist()
+```
+
+### 2.3. Model Fitting 
+Linear Regression method is used to fit the model
+
+```Python
+x_train_piped_sm =sm.add_constant(x_train_piped)
+ols = sm.OLS(y_train,x_train_piped_sm)
+result = ols.fit()
+x_test_piped_sm =sm.add_constant(x_test_piped)
+ypred = result.predict(x_test_piped_sm)
+```
